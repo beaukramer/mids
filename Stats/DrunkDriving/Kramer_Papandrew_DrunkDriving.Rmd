@@ -1,0 +1,494 @@
+---
+title: "Lab 4 "
+author: "Section 2 | Beau Kramer, Kathryn Papandrew"
+date: "12/11/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Lab 4
+
+W271 | Section 2 | Kramer, Papandrew
+
+```{r library_load, message=FALSE, warning=FALSE, paged.print=FALSE, echo=FALSE}
+library("forecast")
+library("astsa")
+library("dplyr")
+library("Hmisc")
+library("ggplot2")
+library("plotly")
+library("gridExtra")
+library("grid")
+library("reshape2")
+library("expss")
+library("plm")
+library("foreign")
+library("gplots")
+library("stats")
+library("car")
+library("lattice")
+library("lmtest")
+library("ggpubr")
+```
+
+## 1. Exercise 1
+
+### 1.1 Load the Data
+
+
+```{r load_data}
+# Read in dataframe
+
+raw.df <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSK9DBvw_760rJTO-26YZtbmLjht6K5Q1zckaV_CXDAyH_CAqeNABN5qTmRLHJiZghBCKM5qXRfoRqJ/pub?gid=330625307&single=true&output=csv")
+```
+
+### 1.2 Initial Observations
+
+*Provide a description of basic structure of dataset.*
+
+The dataset includes a mixture of variable types: binary, continuous, and categorical. 
+
+There are a handful of variables describing the laws in each state for each year, such as speed limit (`sl55`, `sl65`, `sl70`, `sl75`, `slnone`, `sl70plus`), seat belt laws (`seatbelt`, `sbprim`, `sbsecon`), and drinking and driving laws (`perse`, `minage`, `zerotol`, `bac10`, `bac08`). These laws are expressed in proportion of the year where the state had that law. For example, if the value for `sl65` is 0.5, it means that the state had a speed limit of 65 for half the year. Though much of the data for these fields looks binary, they're actually continuous observations. Additionally, there is ancillary data about each state over time expressed in continuous variables: the population (`statepop`), unemployment rate (`unem`), percent of population between 14 and 24 (`perc14_24`), vehicle miles traveled in billions (`vehicmiles`), and miles driven per 100,000 capita (`vehicmilespc`). 
+
+There are also several continuous features describing fatalities in each state both overall (`totfat, ngthtfat, wkndfat`) and broken out into categories such as per 100,000 capita (`totfatrte, nghtfatrte, wkndfatrte`), and per 100 million miles (`totfatpvm, ngthfatpvm, wkndfatpvm`). 
+
+Finally, there are binary features for each year in the dataset indicating a row of data belongs to a certain year (nomenclature is `dYY`, such as `d80` for 1980). This data is likely present to be used for interaction terms. 
+
+### 1.3 Exploratory Data Analysis
+
+In this section, we will explore the data using both graphical and tabular techniques to get a better sense of the structure of the data and relationships between key model variables to use this information to determine if any transformations are needed for the model in the modeling sections. 
+
+##### 1.3.1 Dependent Variable - `totfatrte`
+
+We start by analyzing our dependent variable, `totfatrte`, graphically below. 
+
+```{r totfatrte_graphs, out.width='85%', fig.align='center'}
+g2 <- ggplot(raw.df, aes(as.factor(state), totfatrte, colour=year)) +  geom_boxplot() + geom_jitter(width = 0.2) + ggtitle("Fatalities per 100k over States")+ xlab("State") + ylab("Total Fatalities per 100k")
+g3 <- xyplot(totfatrte ~ year | state, data=raw.df, as.table=T)
+g2
+g3
+```
+
+```{r describe_totfatrte}
+describe(raw.df$totfatrte)
+```
+
+The graphs above give us a few insights. First, we see that total fatalities are dropping as years progress (lighter colors in first graph) and both graphs show that that effects vary by state. We see some states varying a lot year over year while others stay fairly steady with a very slight slope downward. 
+
+Examining this variable in detail, we see that the mean total fatalities per 100,000 population is 18.92 and the median is 18.435. The lowest rates are in the sixes while the highest are in the mid-forties and low-fifties.
+
+Overall, we don't see any gaping outliers or suspicious data so we will proceed with this data untransformed.
+
+##### 1.3.2 Explanatory Variables
+
+##### 1.3.2.1 Speed Limit Laws
+
+To best visualize the speed limit for only EDA purposes, we decided to create a column giving the speed limit in that state where that speed limit was in place for the highest proportion of time for a given year. Please note that it was decided if there is no speed limit (i.e. `slnone` > 0), then the speed limit was set to `none`. The code to derive the speed limit can be seen in the .Rmd file but for the sake of space, this code is hidden in the PDF. 
+
+```{r speedlimit_recode, echo=FALSE}
+df <- c()
+max_speedlimit_proportion = 0
+
+derive_speedlimit <- for(row in 1:nrow(raw.df)){
+    tmp_df <- c()
+    sl55 <- raw.df[row,3]
+    sl65 <- raw.df[row,4]
+    sl70 <- raw.df[row,5]
+    sl75 <- raw.df[row,6]
+    slnone <- raw.df[row,7]
+    
+    sl_max = max(sl55,sl65,sl70,sl75)
+    
+    if (sl55 == sl_max){
+        speed_limit = 55
+    }
+    if (sl65 == sl_max){
+        speed_limit = 65
+    }
+    if (sl70 == sl_max){
+        speed_limit = 70
+    }
+    if (sl75 == sl_max){
+        speed_limit = 75
+    }
+    if (slnone == sl_max){
+        speed_limit = 'none'
+    }
+
+    tmp_df <- c("slwa" = speed_limit)
+
+    df <- rbind(df, tmp_df)
+    rownames(df) <- c()
+    df <- data.frame(df)
+    }
+df.slmax <- cbind(raw.df,df)
+```
+
+
+```{r speed_limit_graphs, out.width='80%', fig.align='center'}
+g1 <- ggplot(df.slmax, aes(as.factor(slwa), totfatrte)) + geom_boxplot() + geom_jitter(width = 0.2) + ggtitle("Speed Limit Laws vs. Total Fatalities") +
+xlab("Speed Limit") + ylab("Total Fatalities per 100k")
+g2 <- ggplot(df.slmax, aes(as.factor(state), slwa, colour=year)) + geom_point() + geom_jitter(width = 0.2) + ggtitle("State & Year vs. Speed Limit Laws") +
+xlab("State") + ylab("Speed Limit")
+grid.arrange(g1,g2,nrow=2)
+```
+
+The graph above displays the relationship between the speed limit in a state total fatalities per 100,000.  There seems to be a trend for the highest variance to be in lower speed limit states in addition to having an very slightly inverse relationship between the speed limit and fatalities. 
+
+We clearly see that there is a variation between state and year of the speed limit. As the years progressed, the speed limits generally rose - probably due to maturing roadways that were more like interstates rather than two-lane highways - and each state has significant variation in the later years. (We note that for the first few years, there is very little effect between states.)
+
+##### 1.3.2.2 Miles Driven
+
+```{r milesdriven_graphs, out.width='80%', fig.align='center'}
+g1 <- ggplot(raw.df, aes(x = vehicmilespc, y = totfatrte)) + ylab('Total Fatalities per 100k') + xlab('Miles Driven per 100k') + ggtitle('Miles Driven vs. Total Fatalities') + labs(fill = "Miles Driven per 100,000\n") + geom_jitter(width=0.3)  + geom_point() + geom_smooth(method = "lm")
+g2 <- ggplot(raw.df, aes(x = state, y = vehicmilespc, colour=year)) + ylab('Miles Driven per 100k') + xlab('State') + ggtitle('State & Year vs. Miles Driven per 100k') + labs(fill = "Miles Driven per 100,000\n") +  geom_jitter(width=0.3)  + geom_point()
+
+grid.arrange(g1,g2,nrow=2)
+```
+
+This top visual shows the relationship between miles driven per 100k and the total fatalities per 100k. There is a clear directly proporational relationship between the miles driven and the total fatalities. The bottom graph shows the Miles Driven per 100k over states and years. As years progress, the total miles driven per 100k tend to increase in each state, in addition to the fact that there are clear differences between each state on miles driven per 100k. 
+
+##### 1.3.2.3 Seatbelt Laws
+
+The raw `seatbelt` feature has the value 0 representing no seatbelt law, 1 representing primary seatbelt law, and 2 representing secondary seatbelt law. Because primary seatbelt law is more restrictive than secondary seatbelt law - a police officer can pull a driver over for lack of seatbelt and impose a greater fine - we decided to recode these laws to be in order of least restrictive to most restrictive. Therefore, a new variable `seatbelt_asc` was created with the value 0 representing no seatbelt law, 1 representing secondary seatbelt law, and 2 representing a primary seatbelt law. The code to do this transformation is below. Please note this recoding was *just* done for EDA purposes to see how the different restrictions related to total fatalities, state and year in a more intuitive order. The code that handled this recoding is hidden in the PDF for sake of space but is included in the .Rmd file for reference. 
+
+```{r seatbelt_recode, echo=FALSE}
+# Recode primary to value = 2, secondary to value = 1
+df <- c()
+
+restrictive_seatbelt_law <- for(row in 1:nrow(raw.df)){
+    tmp_df <- c()
+    seatbelt <- raw.df[row,8]
+    
+    if (seatbelt == 1){
+        seatbelt_law = 2
+    }
+    if (seatbelt == 2){
+        seatbelt_law = 1
+    }
+    if (seatbelt == 0){
+        seatbelt_law = 0
+    }
+
+    tmp_df <- c("seatbelt_asc" = seatbelt_law)
+
+    df <- rbind(df, tmp_df)
+    rownames(df) <- c()
+    df <- data.frame(df)
+    }
+df.seatbelt <- cbind(raw.df,df)
+```
+
+
+```{r seatbelt_graphs, out.width='80%', fig.align='center'}
+g1 <- ggplot(df.seatbelt, aes(as.factor(seatbelt_asc), totfatrte, colour=year)) + geom_boxplot() + geom_jitter(width = 0.2) + ggtitle("Seatbelt Laws vs. Fatalities per 100k") +
+xlab("0-None, 1-Secondary Seatbelt Law, 2-Primary Seatbelt Law")
+g3 <- ggplot(df.seatbelt, aes(as.factor(state), seatbelt_asc, colour=year)) + geom_boxplot() + geom_jitter(width = 0.2) + ggtitle("State vs. Seatbelt Laws") +
+ylab("Seatbelt Law (0,1,2)") + xlab('State')
+grid.arrange(g1, g3, nrow=2)
+```
+
+This relationship between seatbelt laws and total fatalities shows that when there is no seatbelt law, the median total fatalities per 100,000 is higher, along with the maximum total fatalities. The secondary seatbelt law has a higher median for total fatalities. Lastly, the primary seatbelt law, where police can pull a driver over for not having seatbelts fastened and carries the highest fine, has the lowest median total fatalities and smallest variation in total fatalities. 
+
+We also assess the effect of time and location here by looking at the seatbelt laws change over time and in each state. We see that there is a trend of greater restriction imposed in seatbelt laws over time. In the beginning of the 1980s there were almost no seatbelt laws and by the late 1990s and early 2000s, there were many more primary seatbelt laws. We also see clear differences in seat belt laws over states. Some states kept no seatbelt law throughout the timeframe captured in the dataset, while others had no seatbelt law all the way to the strictest seatbelt law during timeframe captured.
+
+##### 1.3.2.4 Young People, Zero Tolerance Laws, Graduated Driver's License
+
+```{r youngpeople_graphs, out.width='80%', fig.align='center'}
+g1 <- ggplot(raw.df, aes(x = perc14_24, y = totfatrte, colour = zerotol)) + ylab('Total Fatalities per 100k') + xlab('Young People between 14 & 24 (%)') + ggtitle('Young People (14-24 yrs) & Zero Tolerance Laws\nvs. Total Fatalities') + geom_jitter(width=0.3)  + geom_point() + scale_color_gradient(low='red4',high='red1') + geom_smooth(method = "lm") + theme(plot.title = element_text(size=8), axis.title = element_text(size=8))
+g2 <- ggplot(raw.df, aes(x = perc14_24, y = totfatrte, colour = gdl)) + ylab('Total Fatalities per 100k') + xlab('Young People between 14 & 24 (%)') + ggtitle('Young People (14-24 yrs) & Graduated Drivers License\nvs. Total Fatalities') + geom_jitter(width=0.3)  + geom_point() + scale_color_gradient(low='green4',high='green1') + geom_smooth(method = "lm") + theme(plot.title = element_text(size=8), axis.title = element_text(size=8))
+g4 <- ggplot(raw.df, aes(x = perc14_24, y = totfatrte, colour = minage)) + ylab('Total Fatalities per 100k') + xlab('Young People between 14 & 24 (%)') + ggtitle('Young People (14-24 yrs) & Minimum Drinking Age\nvs. Total Fatalities') + geom_jitter(width=0.3)  + geom_point() + scale_color_gradient(low='purple4',high='hotpink') + geom_smooth(method = "lm") + theme(plot.title = element_text(size=8), axis.title = element_text(size=8))
+g3 <- ggplot(raw.df, aes(x = state, y = perc14_24, colour = year)) + ylab('Young People between 14 & 24 (%)') + xlab('State') + ggtitle('State vs. Young People (14-24 yrs)') + geom_jitter(width=0.3)  + geom_point() +  geom_smooth(method = "lm") + theme(plot.title = element_text(size=8), axis.title = element_text(size=8))
+
+grid.arrange(g1, g2, g4, g3, nrow=2)
+```
+
+There are four plots above: three (3) of which are showing the relationship between proportion of young people & total fatalities per 100k, the fourth showing the relationship between location & time on the proportion of young people. The top left shows the relationship between young people & total fatalities colored by the presence of a zero tolerance law (i.e. no BAC allowed for anyone under legal drinking age). The top right shows the the same relationship colored by the presence of a graduated driver's license law and the bottom left shows the relationship colored by the minimum drinking age. 
+
+The relationship between young people & the total fatalities clearly shows that the total fatalities per 100k increases with the higher presence of young people. We see that zero tolerance law are more prevalent in places where the percentage of young people is lower, along with the minimum age to consume alcohol being higher in places where the percent of young people is lower. This relationship, howver, is not what could be taken for at face value. We want to confirm if this is truly a relationship or if there is another factor at play. So, we plot the bottom right graph to see if there was a demographic change during the same time laws were changing. We can confirm that there was a demographic shift (i.e. less people between 14 and 24) happening when these laws were being instituted. 
+
+##### 1.3.2.5 Blood Alcohol Laws
+
+In order to derive the Blood Alcohol Content (BAC) Law categories below, each row of the dataset was assessed to pick the max value of `bac08` and `bac10` and choosing the BAC law with the max proportion of effect in the state for that year to get a clearer picture of the effect of the BAC laws on total fatalities. The code for this is hidden below due to amount of space captured by the code but is included in .Rmd file for reference.
+
+```{r BAClaw_recode, echo=FALSE}
+df <- c()
+max_bac_proportion = 0
+
+derive_bac <- for(row in 1:nrow(raw.df)){
+    tmp_df <- c()
+    bac08 <- raw.df[row,12]
+    bac10 <- raw.df[row,13]
+    
+    bac_max = max(bac08,bac10)
+    
+    if (bac08 == bac_max){
+        bac = 0.08
+    }
+    if (bac10 == bac_max){
+        bac = 0.10
+    }
+    if (bac_max == 0){
+        bac = "none"      
+    }
+    
+    tmp_df <- c("bac" = bac)
+
+    df <- rbind(df, tmp_df)
+    rownames(df) <- c()
+   # df <- data.frame(df)
+    }
+df.bacmax <- cbind(raw.df,df)
+```
+
+
+```{r BAClaw_graphs, out.width='80%', fig.align='center'}
+g1 <- ggplot(df.bacmax, aes(as.factor(bac), totfatrte,  colour = minage)) + geom_boxplot() + 
+geom_jitter(width = 0.2) + ggtitle("BAC Laws and Min Drinking Age vs. Fatalities per 100k") +
+xlab("Blood Alcohol Level") + ylab("Total Fatalities per 100k") + scale_color_gradient(low='blue',high='aquamarine2')
+g2 <- ggplot(df.bacmax, aes(as.factor(bac), totfatrte,  colour = perse)) + geom_boxplot() + 
+geom_jitter(width = 0.2) + ggtitle("BAC Laws and Per Se Law vs. Fatalities per 100k") +
+xlab("Blood Alcohol Level") + ylab("Total Fatalities per 100k") + scale_color_gradient(low='purple',high='yellow')
+
+grid.arrange(g1,g2,nrow=2)
+```
+
+The top graph shows that the total fatalities does not vary much between the states with a BAC law of 0.10 and 0.08, but the mean is noticeably higher for states without a 0.08 or 0.1 max BAC law. Layered into this display is the minimum drinking age denoted in color. For states with a higher minimum drinking age, the max total fatalities is lower. We also notice that with the stricter BAC laws comes stricter drinking age laws.
+
+The graph on the bottom shows the same relationship between BAC and total fatalities per 100k, but instead of having the color hue related to the minimum drinking age, it's the presence of a *per se* law in the state for a given year. There doesn't seem to be a clear relational indication of *per se* vs. total fatalities here because states with *per se* and without *per se* both have fatalities ranging from the lowest end of the spectrum to highest end. We do see that states without a BAC law of 0.08 or 0.10 have a higher prevalance of no *per se* law vs. having a *per se* law. 
+
+##### 1.3.2.6 Unemployment
+
+Finally, we assess unemployment. In order to do so, we create two plots: unemployment rate and total fatalities and unemployment rates across states colored by year. 
+
+
+```{r unemployment_graphs, out.width='80%', fig.align='center'}
+g1 <- ggplot(raw.df, aes(x = unem, y = totfatrte)) + 
+        ylab('Total Fatalities per 100k') +
+        xlab('Unemployment (%)') + 
+        ggtitle('Unemployment vs. Total Fatalities') +
+        geom_jitter(width=0.3)  + 
+        geom_point() + 
+        geom_smooth(method = "lm")
+g2 <- ggplot(raw.df, aes(x = state, y = unem, colour=year)) + ylab('Unemployment (%)') + xlab('State') + 
+        ggtitle('State & Year vs. Unemployment') +
+        geom_jitter(width=0.3)  + 
+        geom_point()
+
+grid.arrange(g1,g2,nrow=2)
+```
+
+In the top graph, we see that as the unemployment rate rises, the total fatalities per 100,000 also rises. To dig further into this relationship, we then plot the unemployment rate over states hued by year. In the bottom plot, we see that over time, the unemployment rate is generally decreasing in all states. This makes sense because there was an economic upturn in the 1990s through to the early 2000s where we'd expect to see the unemployment drop. In the modeling, it will be interesting to explore if unemployment has a statistically significant relationship to total fatalities per 100,000 because here it seems that they have a notable relationship.
+
+## 2. Exercise 2
+
+### 2.1 How is `totfatrte` defined?
+
+The variable `totfatrte` is total fatalities per 100,000 population. 
+
+### 2.2 What is average of this variable each year within time period covered in data?
+
+```{r totfatrte_average}
+aggregate(x = list(TotalFatalitiesPer100k = raw.df$totfatrte), list(Year = raw.df$year), mean)
+```
+
+### 2.3 Linear Regression Model
+
+*Estimate a linear regression model of totfatrte on a set of dummy variables for the years 1981 through 2004.*
+
+#### 2.3.1 Estimate the model
+
+```{r linear_dummy_model}
+mod.dum <- lm(totfatrte ~  d81 + d82 + d83 + d84 + d85 + d86 + d87 + d88 + d89 + 
+   d90 + d91 + d92 + d93 + d94 + d95 + d96 + d97 + d98 + d99 + d00 + d01 +
+  d02 + d03 + d04, data=raw.df)
+summary(mod.dum)
+```
+
+#### 2.3.2 What does model explain?
+
+This model with the dummy time variables explains change in the total fatality rate over time. The base year is 1980 so the coefficients represent the change in the total fatality rate relative to 1980.
+
+### 2.3.3 Model Findings
+
+*Describe what you find in this model. Did driving become safer over this period? Please provide detailed explanation*
+
+The coefficients for the year dummy variables are all negative. Aditionally, the coefficients for the dummy variables are all significant at the 0.1 % level, except for 1981. This means that, relative to the reference year of 1980, the total fatality rate fell in subsequent years. That the absolute value of the coefficient is larger in later years is unsurprising because as the rate falls further over time it becomes farther away from the initial level in 1980. However, the decline is not monotonic. We can see in several places, especially the 1990s and early 2000s, that the total fatality rate increased in some years relative to the prior year. However, there could be other omitted variables that explain this decline in the fatality rate. For example, car safety systems could have been improved. So there could be the same number of potentially fatal accidents but people simply survive now due to better safety equipment. In summary, driving did become safer over time according to this model however there could be other factors at work.
+
+## 3. Exercise 3
+
+### 3.1 Expanding Model
+
+*Expand your model in Exercise 2 by adding variables `bac08`, `bac10`, `perse`, `sbprim`, `sbsecon`, `sl70plus`, `gdl`, `perc14_24`, `unem`, `vehicmilespc`, and perhaps transformations of some or all of these variables. Please explain carefully your rationale, which should be based on your EDA, behind any transformation you made. If no transformation is made, explain why transformation is not needed*
+
+Having conducted our EDA, we concluded that no transformations were required. First, for any binary or quasi binary variable, transformations seem unnecessary given the structure (a state either has a law or does not) and the ease it creates in model interpretation. For example, in the case of BAC laws, if a state has a 0.08 BAC law for half the year (`bac08` = 0.5) and a 0.10 BAC law for the other half of the year (`bac10` = 0.5), there is no such thing as a 0.09 BAC law, which is what would happen if we normalized these two variables into a weighted average. Therefore, we decided to keep these as-is.
+
+Second, variables provided as percentages are close to neither zero nor one and so do not need to be stretched or compressed respectively. Finally, variables provided on a per capita basis are on the same basis (per 100,000) as the dependent variable. If they were not we would consider transforming them so they shared the same basis.
+
+
+```{r pooled_ols_model}
+model.ols <- plm(totfatrte ~  d81 + d82 + d83 + d84 + d85 + d86 + d87 + d88 + d89 + 
+   d90 + d91 + d92 + d93 + d94 + d95 + d96 + d97 + d98 + d99 + d00 + d01 +
+  d02 + d03 + d04 +bac08 + bac10 + perse + sbprim + sbsecon + sl70plus + gdl + perc14_24 + unem + vehicmilespc, data=raw.df, model="pooling")
+summary(model.ols)
+```
+
+#### 3.1.2 `bac8` and `bac10`
+
+*How are the variables bac8 and bac10 defined? Interpret the coefficients on bac8 and bac10.*
+
+The variables `bac08` and `bac10` indicate the legal limit for blood acohol content in a state. The coefficient for `bac08` is -2.498. This implies that ceteris paribus, having a legal blood alcohol content limit of 0.08 reduces on average the total fatalities per 100,000 by 2.498 fatalities. The coefficient for `bac10` is -1.418. Similarly, this implies that ceteris paribus, having a legal blood alcohol content limit of 0.1 reduces on average the total fatalities per 100,000 by 1.418 fatalities. Both coefficients are statistically significant at the 0.1 % level.
+
+### 3.1.3 Effects of Laws
+
+#### 3.1.3.1 Do *per se laws* have a negative effect on fatality rate?
+
+The coefficient on `perse` is -0.6201. This implies that all else equal, *per se laws* do have a negative effect on the fatality rate, reducing it on average by 0.6201 fatalities per 100,000. This effect is significant at the 5% level.
+
+#### 3.1.3.2 Do primary seatbelt laws have negative effect on fatality rate?
+
+The coefficient on `sbprim` is -0.07533. This means that ceteris paribus, seatbelt laws have negative effect on the fatality rate, reducing it on average by 0.07533 fatalities per 100,000. This effect however is not statistically significant at any level so this conclusion is not valid.
+
+## 4. Exercise 4
+
+### 4.1 Fixed Effects Model
+
+*Reestimate Exercise 3 model using fixed effects (at state level) model.*
+
+```{r fixed_effects_model}
+model.fe <- plm(totfatrte ~  d81 + d82 + d83 + d84 + d85 + d86 + d87 + d88 + d89 + 
+   d90 + d91 + d92 + d93 + d94 + d95 + d96 + d97 + d98 + d99 + d00 + d01 + d02 + d03 + d04 + 
+              bac08 + bac10 + perse + sbprim + sbsecon + sl70plus + gdl+ perc14_24 + unem + vehicmilespc, data=raw.df, index='state', model="within")
+summary(model.fe)
+```
+
+### 4.2 How do the coefficients on `bac08`, `bac10`, `perse`, and `sbprim` compare with the pooled OLS estimates?
+
+```{r 4-2_comparison}
+print("Pooled OLS Estimates")
+coef(summary(model.ols))[c('bac08','bac10','perse','sbprim'), ]
+print("State Fixed Effects Estimates")
+coef(summary(model.fe))[c('bac08','bac10','perse','sbprim'), ]
+```
+
+The coefficients estimated by the state fixed effect model differ from the pooled OLS estimates. For the two blood acohol content measures, `bac08` and `bac10`, the coefficients are smaller than the pooled OLS estimates. In the case of `bac08` the difference is 1.06, or about 1 fatality per 100,000 people.  According to the state fixed effects model these blood alcohol concentration laws did not reduce the fatality rate by as much as the pooled OLS model indciates. The coefficients for `perse` and `sbprim` are larger than the pooled OLS estimates, implying that these measures reduce the fatality rate by more than the pooled OLS model states. In the case of a primary seatbelt laws this difference was 1.15 fatalities per 100,000 people. 
+
+### 4.3 Which set of estimates is more reliable?
+
+The estimates from the State Fixed Effects model are more reliable. The Pooled OLS model ignores the heterogeneity of the individual states . As we saw in `1.3 Exploratory Data Analysis`, there is considerable variation across the states. Pooling them together throws this information away resulting in less precise measures. We can observe this by reviewing the standard errors for each coefficient. The standard errors are smaller for all coefficients in the state fixed effects model so these estimates are more precise. However, we still have to review the model assumptions to confirm that the standard errors do not require correction.
+
+### 4.4 What assumptions are needed in each of the models?
+
+#### 4.4.1 Pooled OLS
+
+1) *Model Specification* - The model can be written as $y = \beta _ { 0 } + \beta _ { 1 } x _ { 1 } + \beta _ { 2 } x _ { 2 } + \ldots + \beta _ { k } x _ { k } + u$ where $\beta_0$, $\beta_1 \ldots \beta_k$ are the parameters of interest and $u$ is the unobserved random error.
+
+2) *Random Sample* - We assume we have a random sample of $n$ observations that follows the model specified above.
+
+3) *No Perfect Collinearity* - None of the explanatory variables are constant and there is no exact linear relationship among any of them.
+
+4) *Zero Conditional Mean* - The error term has an expected value of zero given any values of the explanatory variables. $E(u|x_1, x_2,\ldots x_k) = 0$
+
+5) *Homoskedasticity* - The error $u$ has the same variance given any values of the explanatory variables. $\text{Var}(u|x_1, x_2, \ldots x_k) = \sigma^2$
+
+#### 4.4.2 Fixed Effects
+
+1) *Model Specification* - For each $i$ the model is $y _ { i t } = \beta _ { 1 } x _ { it1 } + \ldots + \beta _ { k } x _ { i tk } + a _ { i } + u _ { i t } , \quad t = 1 , \ldots , T$ where $\beta_j$ are the parameter estimates and $a_i$ is the unobserved effect.
+
+2) *Random Sample* - We assume we have a random sample from the cross section.
+
+3) *No Perfect Collinearity* - Each explanatory variable changes over time for at least some $i$ and no perfect linear relationships exist among the explanatory variables.
+
+4) *Strict Exogeneity* - For each $t$, the expected value of the error $u_{it}$ given the explanatory variables in all time periods $\textbf{X}_i$ and the unobserved effect $a_i$ is zero. $E(u_{it} | \textbf{X}_i, a_i) =0$
+
+5) *Homoskedasticity* - The variance of the idiosyncratic errors is constant across time and not conditional on either the explanatory variables or unobserved effect. $\text{Var}(u_{it} | \textbf{X}_i,a_i)=\text{Var}(u_{it})=\sigma_u^2$ for all $t = 1,\ldots,T$.
+
+6) *No Serial Correlation* - For all $t\neq s$ the idiosyncratic errors are uncorrelated, conditional on all explanatory variables and unobserved effect. $\text{Cov}(u_{it} ,u_{is} | \textbf{X}_i, a_i)=0$
+
+7) *Normality* - Conditional on all explanatory variables and the unobserved effect, the idiosyncratic errors are independent and identically distributed as $\text{Normal}(0,\sigma_u^2)$.
+
+### 4.5 Are these assumptions reasonable in current context?
+
+#### 4.5.1 Reasonability of Pooled OLS Assumptions
+Given the context, several of the assumptions made by the pooled OLS model seem  unreasonable. First, Assumption 4 (Zero Conditional Mean) seems violated. The model tucks the unobserved effects on a state level into the error term. These unobserved state effects are conditional on the explanatory variables provided. So, the error term $u$ has a nonzero expected value that *is* conditional on the explanatory variables $E(u|x_1, x_2, \ldots, x_k) \neq 0$. We confirm this below with the Residuals vs Fitted plot which shows the residuals are not quite centered at zero. Additionally, the "cone" shape of the residuals suggests that Assumption 5 (Homoskedasticity) is similarly violated. We examine this next.
+
+```{r zero_cond_mean, out.width='60%', fig.align='center'}
+# zero conditional mean
+scatter.smooth(fitted.values(model.ols), residuals(model.ols), xlab = "Fitted Values", ylab = "Residuals", main = "Residuals vs Fitted" , lpars = list(col='red'))
+```
+
+We examine the possible presence of heteroskedasticity by reviewing the Scale-Location plot. The steep angle in the plot shows that the spread becomes wider. This is good evidence of heteroskedasticity. We confirm this with the Breusch–Pagan test below. The p-value is $2.2E-16$, so we reject the null hypothesis of homoskedasticity. Clustered standard errors may help correct these two violations, which we discuss more in `Exercise 7`.
+
+```{r homoskedasticity, out.width='60%', fig.align='center'}
+# homoskedasticity
+scatter.smooth(fitted.values(model.ols), sqrt(residuals(model.ols)/sd(residuals(model.ols))), main = "Scale-Location", xlab = "Fitted Values", ylab = "Sqrt(Standardized Residuals)", lpars = list(col='red'))
+bptest(model.ols)
+```
+
+#### 4.5.2 Reasonability of Fixed Effects Assumptions
+
+On the surface, the fixed effect model assumptions are more reasonable given the heterogeneity in the state level data. However we must still examine the assumptions in detail. In particular we want to see if Assumption 5 (Homoskedasticity), Assumption 6 (No Serial Correlation), and Assumption 7 (Normality), are violated. To observe any heteroskedasticity, we examine the Scale-Location plot below. The distribution of the residuals appears more evenly distributed than in the Pooled OLS model. However, there still does seem to be a change in the distribution of residuals. We confirm this potential heteroskedasticity with the Bresuch-Pagan test. The p-value is $2.2E-16$, so we reject the null hypothesis of homoskedasticity. Assumption 5 (Homoskedasticity) seems violated. 
+
+```{r fitted-vs-residual, out.width='60%', fig.align='center'}
+scatter.smooth(fitted.values(model.fe), sqrt(residuals(model.fe)/sd(residuals(model.fe))), main="Scale-Location" ,xlab = "Fitted Values", ylab="Residuals", lpars = list(col='red'))
+bptest(model.fe)
+```
+
+We next test Assumption 6 (No Serial Correlation). If the idiosyncraticc errors, conditional on all explanatory variables and unobserved effect, exhibit correlation then the model assumptions are violated and we cannot trust the errors. We can test for the presence of serial correlation in panel data models with the Bresuch-Godfrey test. The p-value is $2.2E-16$, so we reject the null hypothesis of no serial correlation in the idiosyncratic errors. Assumption 6 (No Serial Correlation) appears violated as well.
+
+```{r pbgtest}
+pbgtest(model.fe)
+```
+
+Finally, we examine the distribution of errors to test Assumption 7 (Normality). Given the prior two results, we should not anticipate the errors to be normally distributed. We overlay a normal distribution in blue and the distribution of the residuals in red. The residuals appear wider than approximately normal. We can confirm this with the Shaprio-Wilk test of normality. The p-value for the test is $2.2E-16$ so we reject the null hypothesis of normality. We cannot assume that the errors are normally distributed around zero.
+
+```{r normality, out.width='60%', fig.align='center'}
+# normality 
+hist(residuals(model.fe), freq = F, xlab = 'Residuals')
+lines(density(residuals(model.fe)), col="red")
+lines(seq(-10, 15, by=.5), dnorm(seq(-10, 15, by=.5), 0, 1), col="blue")
+shapiro.test(residuals(model.fe))
+```
+
+We can correct for the violations of heteroskedasticiy and serial correlation using a heteroskedasticity consistent covariance estimator. We show the coefficients, standard errors, and p-values after making this correction below.
+
+```{r}
+coeftest(model.fe, vcovHC(model.fe, method="arellano"))
+```
+
+## 5. Exercise 5
+
+*Would you prefer to use random effects model instead of fixed effects model built in Exercise 4?*
+
+There are several factors to take into account when deciding which model to use. The goal of any model is to most accurately depict the relationships while still maintaining interpretability of the results. Fixed effects models are generally simpler to interpret but run the risk of providing inaccurately precise estimators. Random effects can account for study-level variability but typically at the cost of interpretability. 
+
+In order to determine which we'd prefer to use, we find it appropriate to assess primarily the following: is there variability beyond sampling error present from our data? To evaluate this question, we can use the Hausman test to test the null hypothesis that unique errors ($u_i$) are not correlated with the regressors. If we reach a p-value significance (here we use $\alpha = 0.05$) to reject the null hypothesis, then we are confident we have correlated errors (fixed effects). 
+
+In order to run the Hausman test, we will have to first define a random effects model comparable to the fixed effects model we ran in section `4.1 Fixed Effects Model`.  The code below fits the model then runs the Hausman test. 
+
+```{r}
+# Define a random effects model
+model.re <- plm(totfatrte ~  d81 + d82 + d83 + d84 + d85 + d86 + d87 + d88 + d89 + 
+   d90 + d91 + d92 + d93 + d94 + d95 + d96 + d97 + d98 + d99 + d00 + d01 + d02 + d03 + d04 + 
+              bac08 + bac10 + perse + sbprim + sbsecon + sl70plus + gdl+ perc14_24 + unem + vehicmilespc, data=raw.df, index='state', model="random")
+
+# Run a Hausman test
+phtest(model.fe, model.re)
+```
+
+Because we have a p-value of $2.7 e^-16$, we can safely reject the null hypothesis and therefore believe our errors are correlated. In this circumstance, we'd prefer to use the fixed effects model over the random effects model. 
+
+## 6. Exercise 6
+
+*Suppose that `vehicmilespc`, the number of miles driven per capita, increases by 1,000. Using FE estimates, what is estimated effect on `totfatrte`? Please interpret estimate*
+
+In the State fixed effects model in `4.1 Fixed Effects Model`, the coefficient of `vehicmilespc` is 0.00094. Therefore, when the number of miles driven per 100,000 increases by 1000, the total fatalities per 100,000 population (`totfatrte`) increases by 0.94, holding all else constant.
+
+## 7. Exercise 7
+
+*If there is serial correlation or heteroskedasticity in the idiosyncratic errors of the model, what would be the consequences on the estimators and their standard errors?*
+
+When either serial correlation or heteroskedasticity are present in the model, the standard errors and p-values associated with coefficients are inaccurate. To correct for the presence of serial correlation or heteroskedasticity, clustered-robust standard errors should be used instead which will change the standard errors and usually affects the p-values for the estimators.  
