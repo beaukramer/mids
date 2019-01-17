@@ -1,0 +1,483 @@
+---
+title: "Lab 1 - Investigation of 1986 Challenger Accident"
+author: "Section 2 - Beau Kramer, Kathryn Papandrew"
+date: "9/30/2018"
+output: pdf_document
+fontsize: 11pt
+geometry: margin=1in
+line_spacing: single
+---
+
+```{r setup, include=FALSE}
+library(formatR)
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tidyr)
+library(gridExtra)
+library(car)
+library(lmtest)
+
+# Read in dataset to dataframe
+
+c <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vQHTKNMqYQ5pInz6XjbBPAr3Jrk57y-bgDGPNDaKtafURmGLcGXFJDsmLJLRX4N5oDEUZejTmIcIbQR/pub?gid=1978854397&single=true&output=csv")
+```
+
+## 1. Introduction
+
+In 1986, the space shuttle *Challenger* exploded in the first few seconds after launch. This tragedy drew attention to known and unknown vulnerabilities in the design of the shuttle's Solid Rocket Booster (SRB), specifically o-rings sealing the joints in each SRB. It was found that the primary o-ring failed to seal on *Challenger*, hence causing the infamous catastrophe. 
+
+### 1.1 Key Question
+
+The key questions addressed in this lab are *"Do temperature and/or pressure have a relationship with the failures of primary O-rings during launch? If so, with what magnitude?"*
+
+The outcome of the first question simply answers whether the relationship between the given explanatory variables, temperature and pressure, and the outcome variable, number of o-ring failures, is statistically significant. If there is significance, the outcome of the second question answers to how significant and what the expected value of number of failed o-rings is as a function of temperature and/or pressure. 
+
+### 1.2 Methodologies
+
+The data used in this analysis was the number of o-rings and number of failed o-rings, along with the ambient temperature during launch and pressure at which the o-rings were tested. This data originated from the National Aeronautics and Space Administration (NASA) and Morton Thiokol (manufacturer of Solid Rocket Boosters (SRBs)). The ambient temperature and number of o-ring failures was collected by NASA while the test pressure used was provided by Morton Thiokol.  The data encompasses all launches prior to *Challenger*. 
+
+In order to facilitate answering the aforementioned questions with the data at hand, we modeled the data using logistic regression as the outcome variable is a binomial random variable (discussed further in *3.1.1 Outcome Variable*). Using the output of the model, we were able to evaluate the statistical significance of the coefficients, a likelihood ratio test appraising the marginal significance of including explanatory variables in the same model, and $\hat{\pi}$ and expected value estimates over ranges of the relevant explanatory variables. Finally, parametric bootsrapping was utilized to generate a 90% Wald Confidence Interval for sample temperatures. 
+
+In addition, we fitted a classical linear regression model against the data. This model had many issues, however, and further detail is provided in *4.2.7.2 Addendum Part B*. 
+
+### 1.3 Summary
+
+Using the methodologies described above, it was determined using a logistic regression model that a statistically significant relationship exists between temperature and proportion of o-ring failures.
+
+For example, if NASA had postponed the *Challenger* launch in 1986 until the ambient temperature reached 70 degrees, rather than launching at 31 degrees, the probability of failure would have gone from approximately 83% to 4%. 
+
+## 2. Data Validation
+
+To reiterate, the research question at hand is: *"Do temperature and/or pressure have a relationship with failure of primary O-rings during launch? If so, with what magnitude?"*. Therefore, this preliminary validation not only performs an overall check of the data, but also confirms that we have the requisite data to address this question.
+
+### 2.1 Missing Values 
+This dataset contains 23 observations representing 23 out of the 24 launches prior the *Challenger* mission. In the risk analysis by Dalal et al (1989), it is mentioned that the 24th launch's data is not available because the motors were lost at sea. [[Source]](www.jstor.org/stable/229006)  
+
+There are five (5) features (variables) in the dataset for each launch: flight number (`Flight`), temperature of field joint (`Temp`), pressure applied (`Pressure`), number of primary O-rings with incidents (`O.ring`) and total number of primary O-rings (`Number`). 
+
+### 2.2 Top/Bottom Coding Evidence and Anomolies
+Each variable has a value for every row in the dataset (i.e. no null values) and there is no evidence of top or bottom coding for any of the data. We are confident in this conclusion because there is no censorship or alteration of the actual values of the data, therefore no systematic error will be introduced for our models. 
+
+In terms of anomalies, or data that looks erroneous, a simple summary check is done to see what the range and quartiles of the variables are. This check yields the verification that each variable has values within their acceptable range. 
+
+```{r summary-data}
+summary(c)
+```
+
+### 2.3 Data to Address Research Question
+
+Since this research question focuses on the relationship between two covariates, temperature and pressure, and the outcome variable, number of primary O-ring incidents, we can confirm there are sufficient features for our models. Additionally, though the data set is very small, it encompasses all available launch data from the National Aeronautics and Space Administration (NASA) pre-*Challenger*. 
+
+No further data transformations are needed in order to begin Exploratory Data Analysis. 
+
+## 3. Exploratory Data Analysis 
+
+### 3.1 Univariate Analysis
+
+#### 3.1.1 Outcome Variable - `O.ring`
+
+```{r outcome-variable-plot, out.width='70%', fig.align='center'}
+ggplot(c,aes(x=O.ring)) + geom_bar(fill = "#0072B2",colour='black') + xlab("O-Ring Incidents") + ggtitle("O-Ring Incidents") + scale_x_continuous(breaks=c(0,1,2)) + geom_text(stat='count', aes(label=..count..), vjust=-.15)
+```
+
+Of the 23 datapoints, incidents occur in seven (7) of the launches. Five (5) launches have an incident in one (1) o-ring and two (2) launches have an incident in two o-rings. We believe that this phenomenon could be modeled with a binomial distribution. We examine the assumptions below:
+
+##### 1. There are $n$ identical trials
+
+The o-rings are all identical in their construction. Even though they are placed differently in the boosters, we are assuming that their placement has no relation to their success or failure. This is because when the solid fuel is ignited there is comparable pressure in all parts of the booster.
+
+##### 2. There are two possible outcomes
+
+In the case of the o-rings we define success as the o-ring not having an incident of blowby or erosion and failure as the o-ring experiencing either blowby or erosion.
+
+##### 3. The trials are independent of each other
+
+We are assuming that not only is each launch an independent observation (trial), but each o-ring within the solid rocket boosters (SRBs) are independent from each other. This claim can be substantiated by the fact that in the Roger's Commission, the description of the SRB rotating as a whole indicates that the failure of the lower joint (i.e. lowest primary o-ring) did not affect the others, in addition to the fact that the entire stacks in the SRB experienced the same conditions with temperature and pressure. [[Source]](https://spaceflight.nasa.gov/outreach/SignificantIncidents/assets/rogers_commission_report.pdf)
+
+##### 4. The probability of success remains constant for each trial
+
+We are assuming that the probability of failure does not vary between launches. This is a simplifying assumption.
+
+##### 5. The random variable of interest is the number of successes.
+
+We are concerned merely with the occurrence of incidents and not their order so this is a reasonable assumption.
+
+#### 3.1.2 Covariates 
+
+```{r covariate-plots, out.width='70%', fig.align='center'}
+ggplot(c,aes(x=Temp)) + geom_bar(fill = "#0072B2",colour='black') + xlab("Degrees Fahrenheit") + ggtitle("Temperature") + geom_text(stat='count', aes(label=..count..), vjust=-.1)
+ggplot(c,aes(x=factor(Pressure))) + geom_bar(fill = "#0072B2",colour='black') + xlab("PSI") + ggtitle("Combustion Pressure") + geom_text(stat='count', aes(label=..count..), vjust=-.1)
+```
+
+Temperatures range from 53 to 83 degrees. About 80% of the launches occur between the mid-sixties to high-seventies. 
+
+Most of the o-rings were tested at a combustion pressure of 200 psi. We do not have reason to believe this is the pressure experienced under launch as noted by Dalal that combustion pressure during launch can reach up to 1000 psi. 
+
+The difference in combustion pressure values among launches is due to the increased test standards for field joints as time went on. The contractor Morton-Thiokol tested the field joints at 50 psi for early launches, increased the standard to 100 psi for launches 7 and 8, then finally, consistently tested the joints at 200 psi. 
+
+### 3.2 Bivariate Analysis
+To better visualize the data, we have unstacked the launches into individual o-rings (code below yielding dataframe `c_raw`). With 6 o-rings per launch and 23 launches, we have 138 datapoints to plot.
+
+
+```{r c_raw-creation}
+c_raw <- c()
+split_rows <- for(row in 1:nrow(c)){
+    tmp_df <- c()
+    flight <- c[row,1]
+    temp <- c[row,2]
+    pressure <- c[row,3]
+    num_oring_fail <- as.numeric(c[row,4])
+    num_oring <- as.numeric(c[row,5])
+
+    for(oring in 1:num_oring){
+        if (num_oring_fail > 0){
+            tmp_df <- c("O.ring" = 1, "Temp" = temp, "Pressure" = pressure, "Flight" = flight)
+        }
+        else{
+            tmp_df <- c("O.ring" = 0, "Temp" = temp, "Pressure" = pressure, "Flight" = flight) 
+            }
+        num_oring_fail <- num_oring_fail - 1
+        c_raw <- rbind(c_raw, tmp_df)
+        rownames(c_raw) <- c()
+        c_raw <- data.frame(c_raw)
+    }  
+} 
+```
+
+
+```{r bivariate-boxplots, out.width='70%', fig.align='center'}
+# Creation of boxplots 
+
+ggplot(c_raw, aes(factor(O.ring),Temp)) + geom_boxplot(aes(fill=factor(O.ring))) + geom_jitter(width=0.3) + ggtitle("")  + labs(fill = "Failure\n") +  xlab("0-Non-Failure, 1-Failure") + ylab("Degrees Fahrenheit") + ggtitle("Temperature vs O-Ring Incidents")
+ggplot(c_raw, aes(factor(O.ring),factor(Pressure))) + geom_jitter(aes(color=factor(O.ring)),width=0.2) + ggtitle("") + labs(color = "Failure\n") +  xlab("0-Non-Failure, 1-Failure") + ylab("PSI") + ggtitle("Pressure vs O-Ring Incidents")
+```
+
+The boxplot of temperature versus o-ring incidents reveals that failures tend to occur at lower temperatures. This is by no means a hard rule as there are incidents of failure at temperatures in the seventies. However, when considered against the number of trials at low and high temperatures, the frequency of failures appears higher at lower temperatures. We expect to see a positive relationship between temperature and the rate of non-failure (success) when modeled.
+
+The boxplot of pressure versus o-ring incidents shows that all incidents but one occurred in o-rings tested for 200 psi. This corresponds roughly to a 91% success rate for o-rings tested for 200 psi and a 97% success rate for o-rings tested for 50 psi. However, the relationship is puzzling. One might expect that o-rings tested for higher pressures would fail less frequently as they have passed a more stringent test. Plotting temperature versus pressure reveals the answer to this mystery.
+
+### 3.3 Multivariate Analysis
+
+```{r multivariate-boxplots, out.width='70%', fig.align='center'}
+ggplot(c_raw, aes(factor(Pressure),Temp)) + geom_jitter(aes(color=factor(O.ring), shape=factor(O.ring)), width=.15) +
+ggtitle("O-Ring Incidents by Temperature and Combustion Pressure") + xlab("PSI") + ylab("Degrees Fahrenheit") + labs(color = "Failure\n", shape="Failure\n")
+```
+
+The answer to the puzzling relationship between pressure and o-ring incidents becomes clear in this plot. There were no launches with o-rings tested for 50 or 100 psi at temperatures lower than 65 degrees. Launches conducted at temperatures lower than this only occurred with o-rings tested for 200 psi. Stated plainly, the relationship observed between pressure and o-ring incidents is actually capturing the relationship between temperature and o-ring incidents. We remain skeptical of pressures explanatory power.
+
+## 4. Modeling
+
+### 4.1 Model 1 - Logistic Regression with `Temperature` and `Pressure`
+
+The logistic regression model for the relationship between `Temperature` and `Pressure` with the outcome variable `O.ring` can be represented as follows :- 
+
+$$ \pi = \frac{exp(\beta_0 + \beta_1 (Temperature) + \beta_2 (Pressure))}{1 + exp(\beta_0 + \beta_1 (Temperature) + \beta_2 (Pressure))} $$
+
+### 4.1.1 Question 4(b)
+
+Estimate the logistic regression model using the explanatory variables in a linear form. 
+
+```{r model-1}
+model.1 <- glm(formula = O.ring/Number ~ Temp + Pressure, family = binomial(link = "logit"), weights = Number, data = c)
+summary(model.1)
+```
+
+#### 4.1.1.1 Model Assumptions
+
+1) *Binomial Dependent Variable* - The outcome variable is a proportion of failed o-rings over the total o-rings (i.e. total "trials"). 
+
+2) *Observations Independent of Each Other* - (** * Question 4(a)**) This model assumes that each o-ring within each launch is independent of one another. As mentioned in section *3.1.1 Outcome Variable*, there is ample evidence that each o-ring, regardless of position in SRB, is completely unaffected by the success or failure of the other o-rings. 
+
+The only noted issue with independence is that, according to Dalal, after launch, rocket motors would be recovered from the ocean for inspection and *possible reuse*. If an o-ring was used from launch to launch, the o-rings would not be independent. This assumption is vital because that means that a single o-ring won't have a disproportionate of an effect on the model's output. 
+
+3) *No perfect multicollinearity* - This assumption is tested below. The VIF of the model is approximately equal to one (1) for both variables. This indicates that there is no evidence of multicollinearity between our variables. 
+
+```{r vif-model1}
+vif(model.1)
+```
+
+4) *Linearity of Independent Variables and Error Terms* - For this model, we assume the linearity of independent variables and error terms. Visually inspecting this assumption is outside the scope of this lab. 
+
+** * Please note that assumption (2) addresses 4(a) from Bilder et al (2014)**
+
+### 4.1.3 Question 4(c) 
+
+*Perform LRTs to judge the importance of the explanatory variables in the model.*
+
+In order to perform the Likelihood Ratio Tests, we will use the type II Anova function in order to include all other explanatory variables besides the variable being tested (in this case, no higher-order interactions or transformations are performed with either variable, so that consideration is not relevant here). 
+
+The two hypothesis tests being conducted here are:
+
+* Temperature
+
+$$
+H_0: \beta_1 = 0 \\
+H_a: \beta_1 \neq 0
+$$
+
+In other words: 
+
+$$
+H_0: logit(\pi) = \beta_0 + \beta_2*Pressure \\
+H_a: logit(\pi) = \beta_0 + \beta_1*Temp + \beta_2*Pressure
+$$
+
+* Pressure 
+
+$$
+H_0: \beta_2 = 0 \\
+H_a: \beta_2 \neq 0
+$$
+
+In other words: 
+
+$$
+H_0: logit(\pi) = \beta_0 + \beta_1*Temp \\
+H_a: logit(\pi) = \beta_0 + \beta_1*Temp + \beta_2*Pressure
+$$
+
+
+```{r anova-model1}
+Anova(model.1)
+```
+
+First, evaluating temperature, the output for $-2log(\Lambda) = 5.183803$ with a p-value of 0.023. With an $\alpha = 0.05$, we can safely reject the null hypothesis, though we would not be able to for $\alpha = 0.01$. Therefore, we can say that there is marginal evidence that temperature is important to include in the model given that pressure is in the model.  
+
+Second, evaluating pressure, the output for $-2log(\Lambda) = 1.540657$ with a p-value of 0.215. With an $\alpha = 0.05$, we fail to reject the null hypothesis that pressure is not important to include given temperature is in the model. 
+
+### 4.1.4 Question 4(d)
+
+*The authors chose to remove `Pressure` from the model based on the LRTs. Based on your results, discuss why you think this was done. Are there any potential problems with removing this variable?*
+
+> This decision was likely made because of the results of a Wald or Likelihood Ratio Test that indicated that pressure was not important in the model when temperature was included, in addition to the fact that the relationship between pressure and failure of an o-ring (outcome variable) was not statistically significant with $\alpha = 0.05$ given a p-value of 0.652.  The potential problem with removing this variable is worsening the goodness of fit, including introducing a potential for omitted variable bias. 
+
+### 4.2 Model 2 - Logistic Regression with `Temp`
+
+#### 4.2.1 - Question 5(a)
+
+*Estimate the model*
+
+```{r model-2}
+model.2 <- glm(formula = O.ring/Number ~ Temp, family = binomial(link = "logit"), weights = Number, data = c)
+summary(model.2)
+```
+
+#### 4.2.2 - Question 5(b) 
+
+*Construct two plots - $\pi$ vs. Temperature and Expected number of failures vs. Temperature.*
+
+##### 4.2.2.1 $\hat{\pi}$ vs. Temp 
+
+```{r pihat-vs-temp, out.width='70%', fig.align='center'}
+beta0 <- model.2$coefficients[1]
+beta1 <- model.2$coefficients[2]
+curve(expr=exp(beta0+beta1*x)/(1 + exp(beta0+beta1*x)),from=20, to=100, col="red",
+      ylab=expression(hat(pi)), xlab="Degrees Fahrenheit",
+      main="Estimated Probability of Failure vs Temperature", panel.first=grid())
+```
+
+##### 4.2.2.2 Expected number of failures vs. Temp. 
+
+Use a temperature range of 31 degrees to 81 degrees on the x-axis even though the minimum temperature in the data set was 53.
+
+```{r expectedvalue-vs-temp, out.width='70%', fig.align='center'}
+curve(expr=6*exp(beta0+beta1*x)/(1 + exp(beta0+beta1*x)),from=31, to=81, col="red",
+      ylab="Failures", xlab="Degrees Fahrenheit",
+      main="Expected Number of Failures vs Temperature", panel.first=grid())
+```
+
+
+#### 4.2.3 Question 5(c)
+
+Include the 95% Wald confidence interval bands for $\pi$ on the plot. Why are the bands much wider for lower temperatures than for higher temperatures?
+
+```{r confidence-interval-model2, out.width='70%', fig.align='center'}
+# Expected number of failures = n*(pi)
+
+curve(expr=6*(exp(beta0+beta1*x)/(1 + exp(beta0+beta1*x))),from=31, to=81, col="red",
+      ylab="Failures", xlab="Degrees Fahrenheit",
+      main="Expected Number of Failures vs Temperature", panel.first=grid())
+
+ci.pi <- function(newdata, mod.fit.obj, alpha){
+    linear.pred <- predict(object = mod.fit.obj, newdata = newdata, type = "link", se =TRUE)
+    CI.lin.pred.lower <- linear.pred$fit - qnorm (p = 1 - alpha /2) * linear.pred$se
+    CI.lin.pred.upper <- linear.pred$fit + qnorm (p = 1 - alpha /2) * linear.pred$se
+    CI.pi.lower <- exp(CI.lin.pred.lower)/ (1 + exp(CI.lin.pred.lower))
+    CI.pi.upper <- exp(CI.lin.pred.upper)/ (1 + exp(CI.lin.pred.upper))
+    list (lower = CI.pi.lower, upper = CI.pi.upper) 
+}
+
+# n*(pi)
+curve(expr = 6*(ci.pi(newdata = data.frame(Temp = x), mod.fit.obj = model.2, alpha=0.05)$lower), 
+      col = "blue", lty = "dotdash", add = TRUE, from = 31, to= 81) 
+curve(expr = 6*(ci.pi(newdata = data.frame(Temp = x), mod.fit.obj = model.2, alpha=0.05)$upper), 
+      col = "blue", lty = "dotdash", add = TRUE, from = 31, to= 81)
+```
+
+The bands are wider for lower temperatures because of the fewer number of observations at those temperatures. So, there is more uncertainty about the true value at these low temperatures. Most of the data is for higher temperatures so the confidence interval is narrower at these higher levels.
+
+#### 4.2.4 - Question 5(d)
+
+*The temperature was 31 degrees at launch for the Challenger in 1986. Estimate the probability of an O-ring failure using this temperature, and compute a corresponding confidence interval. Discuss what assumptions need to be made in order to apply the inference procedures.*
+
+```{r prediction-model2}
+pred <- predict(model.2, newdata = data.frame(Temp=31), type="link", se=TRUE)
+pi.31 <- exp(pred$fit)/6
+ci.pi.31 <- ci.pi(model.2, newdata = data.frame(Temp=31),alpha=0.05)
+ci.pi.31.upper <- ci.pi.31$upper
+ci.pi.31.lower <- ci.pi.31$lower
+data.frame(estimate = pi.31, lower=ci.pi.31.lower, upper=ci.pi.31.upper)
+```
+
+In order to apply the inference procedures, we are assuming that the Wald confidence interval is capturing the true confidence levels. That is, the lower and upper limits computed are the true 5 and 95 percent levels. The reason this assumption needs to be made is the known discrepancy between stated and true confidence intervals when values are close to 0 and 1 (the bounds) using the Wald confidence interval. 
+
+#### 4.2.5 Question 5(e)
+
+##### 4.2.5.1 Simulate a large number of data sets (n = 23 for each) from the estimated model of $logit(\hat{\pi}) = \hat{\beta_0} + \hat{\beta_1}*Temp$ and estimate new models for each data set, say $logit(\hat{\pi}) = \hat{\beta_0} + \hat{\beta_1}*Temp$
+
+```{r parametric-bootstrapping-model2}
+set.seed(42)
+
+bootstrap.func <- function(n) {
+    data <- matrix(runif(n=n, min=20, max=100), nrow=n, ncol=1)
+    pi <- exp(beta0 + beta1 * data)/(1 + exp (beta0 + beta1 * data))
+    outcomes <- rbinom(n=n, size = 6, prob=pi)
+    number <- 6
+    y <- data.frame(outcomes=outcomes, number=number)
+    mod.fit <- glm(formula = y$outcomes/y$number ~ data, weights=y$number, family=binomial(link="logit"))
+    output <- data.frame(beta.hat0=mod.fit$coefficients[1], beta.hat1 = mod.fit$coefficients[2])
+    return(output)
+}
+generated.betas <- data.frame()
+for (i in seq(1:1000)){
+    betas.hats <- bootstrap.func(23)
+    generated.betas <- rbind(generated.betas,betas.hats)
+}
+rownames(generated.betas) <- c()
+head(generated.betas)
+```
+
+##### 4.2.5.3 Compute $\hat{\pi}$ at a specific temperature of interest. The authors used the 0.05 and 0.95 observed quantiles from the $\hat{\pi}$ simulated distribution as their 90% confidence interval limits. Using the parametric bootstrap, compute 90% confidence intervals separately at temperatures of 31 and 72 degrees.
+
+```{r bootsrapping-confidence-interval-model2}
+beta.hat0.05 <- quantile(generated.betas$beta.hat0, probs=0.05)
+beta.hat0.95 <- quantile(generated.betas$beta.hat0, probs=0.95)
+beta.hat1.05 <- quantile(generated.betas$beta.hat1, probs=0.05)
+beta.hat1.95 <- quantile(generated.betas$beta.hat1, probs=0.95)
+
+pred31 <- predict(object = model.2, newdata = data.frame(Temp=31), type = "link", se =TRUE)$fit
+pi.hat31 <- exp(pred31)/(1 + exp(pred31))
+ci.pi.hat31.lower <- exp(beta.hat0.05 + beta.hat1.05 * 31)/(1+exp(beta.hat0.05 + beta.hat1.05 * 31))
+ci.pi.hat31.upper <- exp(beta.hat0.95 + beta.hat1.95 * 31)/(1+exp(beta.hat0.95 + beta.hat1.95 * 31))
+data.frame(pi.hat31, ci.pi.hat31.lower, ci.pi.hat31.upper)
+
+pred72 <- predict(object = model.2, newdata = data.frame(Temp=72), type = "link", se =TRUE)$fit
+pi.hat72 <- exp(pred72)/(1 + exp(pred72))
+ci.pi.hat72.lower <- exp(beta.hat0.05 + beta.hat1.05 * 72)/(1+exp(beta.hat0.05 + beta.hat1.05 * 72))
+ci.pi.hat72.upper <- exp(beta.hat0.95 + beta.hat1.95 * 72)/(1+exp(beta.hat0.95 + beta.hat1.95 * 72))
+data.frame(pi.hat72, ci.pi.hat72.lower, ci.pi.hat72.upper)
+```
+
+#### 4.2.6 Question 5(f) 
+
+*Determine if a quadratic term is needed in the model for the temperature.*
+
+When adding a quadratic term to the model with temperature, the logit function ends up looking as such:
+
+$$
+logit(\pi) = \beta_0 + \beta_1*Temp + \beta_2*Temp^2
+$$
+
+The need for this term is tested and determined below.
+
+First, we created a model with the quadratic term.
+
+```{r model-quad}
+model.quad <- glm(formula = O.ring/Number ~ Temp + I(Temp^2), weights=Number, family = binomial(link = "logit"), data = c)
+```
+
+In order to evaluate the need for a quadratic term in the model, an LRT was conducted to see the residual deviance between the model with just a linear temperature covariate and the model with both a linear and quadratic term. This test can be seen below.
+
+```{r anova-modelquad}
+anova(model.2, model.quad, test="Chisq")
+```
+
+Even though the residual deviance is better for the second model, the null hypothesis that the quadratic model has no advantage over the linear-term-only model fails to be rejected with an $\alpha = 0.05$ as the p-value is 0.774. The results of this test and the practical loss in model interpretability, we have determined that a quadratic term is not needed.
+
+#### 4.2.7 Addendum Questions
+
+##### 4.2.7.1 Part A
+
+*Interpret the main result of your final model in terms of both odds and probability of failure*
+
+```{r odds-pfailure model2}
+beta.temp <- model.2$coefficients[2]
+c.value <- -5
+or.temp <- exp(c.value*beta.temp)
+paste("Odds for 5 degree decrease in temperature: ",round(or.temp,2))
+temps <- c(30,40,50,60,70,80)
+pis <- exp(model.2$coefficients[1] + temps*beta.temp)/(1+ exp(model.2$coefficients[1] + temps*beta.temp))
+data.frame(Temperature = temps, "Probability of Failure"=pis)
+```
+
+The odds of failure increase 1.78 times for every 5 degree decrease in temperature. Had NASA postponed the flight until temperatures reached 60 degrees, the probability of an o-ring failure would have been 13.6%.
+
+##### 4.2.7.2 Part B
+
+*With the same set of explanatory variables in your final model, estimate a linear regression
+model. Explain the model results; conduct model diagnostic; and assess the validity of
+the model assumptions. Would you use the linear regression model or binary logistic
+regression in this case. Please explain.*
+
+```{r model-linear}
+model.lin <- lm(formula = O.ring ~ Temp, data=c)
+summary(model.lin)
+```
+
+The linear regression model has a coefficient for temperature of -0.04754. This implies the probability of failure declines by 4.754% for each 1 degree increase in temperature. The t-test shows statistical significance for this value at the 5% level. 
+
+**Validity of Model Assumptions**
+
+*1. Linearity in Parameters* - When assessing the `Temp` and `O.rings` variables in the bivariate analysis, it's clear these are not linearly related.
+
+*2. Random Sampling* - Every launch with data available (i.e. the 23 launches with SRBs successfully recovered post-launch) had an equal chance of being selected for this dataset, therefore the random sampling assumption is satisfied. 
+
+*3. No Perfect Multicollinearity* - This model has only a single explanatory variable, so multicollinearity is not a concern.
+
+*4. Zero Conditional Mean of Error Term* - Examining the Residuals vs Fitted plot reveals the residuals are not centered around zero in the model. This assumption does not hold.
+
+```{r zero_cond_means-modellin, out.width='70%', fig.align='center'}
+
+plot(model.lin, which =1)
+```
+
+*5. Homoskedasticity* -  The assumption of homoskedasticity seems to hold given the BreuschâPagan test conducted below. The p-value is 0.83, confirming that we fail to reject the null hypothesis that there is no heteroskedasticity in the model.
+
+```{r bptest-modellin}
+bptest(model.lin)
+```
+
+
+*6. Normality of Residuals* - Examining the histogram of residuals (below) reveals they are not normally distributed. The assumption of normality of residuals does not hold.
+
+
+```{r normality-residuals-modellin, out.width='70%', fig.align='center'}
+hist(model.lin$residuals, breaks=25,
+    main="Histogram of Linear Model Residuals",
+    xlab=NULL)
+```
+
+Based on the assessment above, we would not use the linear regression model for several reasons. First, the assumptions do not seem to hold. We would rather continue with the binary logistic regression whose assumptions are more fulfilled. Second, the linear regression model is unbounded. That is, there are temperatures for which the model would predict a probability of failure of greater than 100% or less than 0%. This range is clearly nonsensical. Finally, the assumption of a linear relationship between o-ring failure and temperature does not seem likely when considering the exploratory data analysis conducted in section 3, *Exploratory Data Analysis*. We are continuing with the logistic regression model as the best option given the data.
+
+## Conclusion
+
+We began with the research question, *Do temperature and/or pressure have a relationship with the failures of primary O-rings during launch? If so, with what magnitude?"* In order to address that question, we iterated through successive models to find the optimal option for the data in terms of parsimony, interpretability, goodness of fit, and satisfaction of underlying assumptions. We created models using logistic regression for *Temperature and Pressure vs. Proportion of O-ring Failures, Temperature vs. Proportion of O-ring Failures, Temperature and Temperature$^2$ vs. Proportion of O-ring Failures.* and linear regression for *Temperature vs. Proportion of O-ring Failures*. 
+
+After assessing the merits of each model, the model that best the aforementioned criteria was the *Temperature vs. Proportion of O-ring Failures* logistic regression model. Typically, a model with only one explanatory variable would draw questions when drawing conclusions about predictor variables affecting the outcome variable. But, beyond the likelihood ratio test that confirmed so, it makes sense that only temperature was chosen, given the data provided, because the pressure variable referred to test pressure, not pressure imparted on the o-rings when their success or failure were captured during a launch. Perhaps if the pressure experienced by the O-rings (or the putty affecting the O-rings) was available, it would have a more significant relationship with the failure of the primary O-ring.
+
+In terms of the research question, we are able to conclude that temperature and the failure of primary O-rings do have a statistically significant inversely-proportional relationship. And to what extent? The odds of failure increase 1.78 times for every 5 degree decrease in temperature. This relationship is of crucial value for NASA. Had NASA postponed the flight until temperatures reached 60 degrees, the probability of an o-ring failure would have been 13.6%, rather than approximately 83.4% at the temperature *Challenger* launched, 31 degrees.
